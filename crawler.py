@@ -15,7 +15,7 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 def normalize_url(url: str) -> str:
-    """URL'yi normalleştir: query ve fragmentleri kaldır. test"""
+    """URL'yi normalleştir: query ve fragmentleri kaldır."""
     parsed = urlparse(url)
     return parsed.scheme + "://" + parsed.netloc + parsed.path
 
