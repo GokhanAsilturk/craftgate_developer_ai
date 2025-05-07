@@ -1,15 +1,16 @@
 # crawler.py
 import json
+import logging
 import os
+import re
 import time
+from typing import List, Dict, Optional
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
-from typing import List, Dict, Optional
-import logging
+
 from config import Config
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -50,89 +51,76 @@ def crawl_website_with_cache(base_url: str, force_refresh: bool=False) -> List[D
     # force_refresh=True ya da cache yaşlıysa buraya düşer
     chunks = crawl_website(base_url)
     save_cache(chunks)
+
+    # Debug için içerikleri bir txt dosyasına kaydedelim
+    # with open("crawled_contents.txt", "w", encoding="utf-8") as f:
+    #     for i, chunk in enumerate(chunks):
+    #         f.write(f"URL: {chunk['url']}\n")
+    #         f.write(f"Başlık: {chunk.get('title', '')}\n")
+    #         f.write(f"İçerik: {chunk['text'][:500]}...\n\n")
+
     return chunks
 
 def crawl_website(base_url: str) -> List[Dict[str, str]]:
+    """
+    Web sitesi sayfalarını tarar ve içerik+HTML şeklinde döndürür.
+    """
     visited = set()
     to_visit = [base_url]
-    all_chunks = []
-    seen_texts = set()
-
+    all_pages = []
+    seen_urls = set()
+    
     while to_visit:
         url = to_visit.pop(0)
         normalized_url = normalize_url(url)
-        if normalized_url in visited:
+
+        if normalized_url in visited or normalized_url in seen_urls:
             continue
 
+        seen_urls.add(normalized_url)
+        
         if '/en' in urlparse(url).path:
             continue
 
         try:
-            response = requests.get(url, headers={"User-Agent": Config.USER_AGENT})
+            logger.info(f"Sayfa taranıyor: {url}")
+            response = requests.get(url, headers={"User-Agent": Config.USER_AGENT}, timeout=30)
             response.raise_for_status()
+
             content_type = response.headers.get('Content-Type', '')
             if 'text/html' not in content_type:
                 continue
 
-            soup = BeautifulSoup(response.text, 'html.parser')
+            html_content = response.text
+            soup = BeautifulSoup(html_content, 'html.parser')
 
+            # Dil kontrolü yap
             html_tag = soup.find('html')
             if html_tag and html_tag.get('lang') != 'tr':
                 continue
 
-            content_sections = []
-            current_section = []
-            current_header = None
+            # İçeriği çıkart
+            title = soup.title.text.strip() if soup.title else ""
 
-            for tag in soup.find_all(['h1', 'h2', 'h3', 'p', 'pre', 'code', 'li', 'td', 'div', 'span']):
-                text = tag.get_text().strip()
-                if not text:
-                    continue
+            # Ana içeriği çıkar
+            main_content = extract_main_content(soup)
 
-                if tag.name in ['h1', 'h2', 'h3']:
-                    if current_section and current_header:
-                        content_sections.append({
-                            'header': current_header,
-                            'content': " ".join(current_section)
-                        })
-                    current_header = text
-                    current_section = []
-                else:
-                    current_section.append(text)
+            # HTML'i temizle
+            simplified_html = simplify_html(html_content)
 
-            if current_section and current_header:
-                content_sections.append({
-                    'header': current_header,
-                    'content': " ".join(current_section)
-                })
+            # Sayfayı sakla
+            page = {
+                'url': url,
+                'title': title,
+                'text': main_content,  # Vektör aramalar için metin içerik
+                'html': simplified_html,  # LLM için HTML içerik
+                'content_index': len(all_pages)  # İndeks bilgisi
+            }
 
-            for idx, section in enumerate(content_sections):
-                # Başlık ve içeriği normalleştir
-                header = normalize_text(section['header'])
-                content = normalize_text(section['content'])
+            all_pages.append(page)
+            print(f"Çekilen içerik: {title[:50]}... (URL: {url})")
 
-                # Başlık içeriğin içinde tekrar ediyorsa, bunu temizle
-                if header in content:
-                    content = content.replace(header, '').strip()
-
-                chunk_text = f"{section['header']}: {content}"
-                if chunk_text in seen_texts:
-                    continue
-                seen_texts.add(chunk_text)
-
-                # "ödeme", "form", "başlatma" kelimelerini içeren başlıklar ve içerikler
-                header_lower = header
-                content_lower = content
-                if True:  # Tüm içeriği al veya daha kapsamlı filtre uygula
-                    print(f"Çekilen içerik: {chunk_text[:100]}... (URL: {url})")
-                    all_chunks.append({
-                        'url': url,
-                        'content_index': idx,
-                        'text': chunk_text
-                    })
-
-            visited.add(normalized_url)
-
+            # Linkleri ekle
             for link in soup.find_all('a', href=True):
                 href = link['href']
                 absolute_url = urljoin(base_url, href)
@@ -140,13 +128,78 @@ def crawl_website(base_url: str) -> List[Dict[str, str]]:
                 if parsed_link.netloc == urlparse(base_url).netloc and '/en' not in parsed_link.path:
                     to_visit.append(absolute_url)
 
+            visited.add(normalized_url)
+            
         except Exception as e:
-            logger.error(f"Error crawling {url}: {e}")
+            logger.error(f"Tarama hatası {url}: {e}")
 
-    with open("crawled_contents.txt", "w", encoding="utf-8") as f:
-        for chunk in all_chunks:
-            f.write(f"URL: {chunk['url']}\n")
-            f.write(f"İçerik: {chunk['text'][:500]}...\n\n")
+    logger.info(f"Toplam {len(all_pages)} sayfa çekildi.")
+    return all_pages
 
-    logger.info(f"Toplam {len(all_chunks)} içerik parçası çekildi.")
-    return all_chunks
+
+def extract_main_content(soup):
+    """
+    Sayfanın ana içeriğini metin olarak çıkarır.
+    """
+    # Ana içerik containerları
+    main_selectors = [
+        'main', 'article', 'div.content', 'div.main-content',
+        'div#content', 'section.content', 'div[role="main"]'
+    ]
+
+    for selector in main_selectors:
+        main_content = soup.select(selector)
+        if main_content:
+            content = max(main_content, key=lambda x: len(x.get_text()))
+            return content.get_text(separator=' ', strip=True)
+
+    # Ana içerik containerı bulunamadığında
+    content_divs = [(div, len(div.get_text())) for div in soup.find_all('div')
+                    if len(div.get_text().strip()) > 100]
+
+    if content_divs:
+        # İçerik en uzun olan div'i döndür
+        max_div = max(content_divs, key=lambda x: x[1])
+        return max_div[0].get_text(separator=' ', strip=True)
+
+    # Son çare: Tüm metni al
+    return soup.get_text(separator=' ', strip=True)
+
+
+def simplify_html(html_content):
+    """
+    HTML'i sadeleştir, sadece <article> içeriğini (veya fallback olarak <main>/<body>) al,
+    ve gereksiz kısımları kaldır.
+"""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    target_element = None
+
+    # Önce <article> etiketini ara
+    article_element = soup.find('article')
+    if article_element:
+        target_element = article_element
+    else:
+        # <article> yoksa <main> etiketini ara
+        main_element = soup.find('main')
+        if main_element:
+            target_element = main_element
+        else:
+            # <main> de yoksa <body> etiketini kullan (varsa)
+            target_element = soup.body
+
+    # Eğer hedef element bulunduysa (article, main veya body)
+    if target_element:
+        # Hedef element içindeki gereksiz etiketleri kaldır
+        for tag in target_element.select('script, style, meta, link, iframe, img, nav, footer'):
+            # header ve footer gibi genel sarmalayıcıları da kaldıralım
+            tag.decompose()
+
+        # Temizlenmiş hedef elementin string temsilini döndür
+        return str(target_element)
+    else:
+        # Hiçbir ana içerik elementi bulunamazsa (body dahil), tüm soup'un metnini döndür
+        # veya boş bir string döndür - duruma göre karar verilebilir.
+        # Şimdilik temizlenmiş tüm soup'u döndürelim (script/style vb. kaldırılmış haliyle)
+        for tag in soup.select('script, style, meta, link, iframe, img, nav, footer'):
+            tag.decompose()
+        return str(soup)

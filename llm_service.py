@@ -1,23 +1,33 @@
+# llm_service.py
+from typing import Dict
+
 import requests
-from typing import List
+
 from config import Config
+
 
 class LLMService:
     @staticmethod
-    def generate_answer(question: str, context_sentences: List[str]) -> str:
-        if not context_sentences:
+    def generate_answer_from_html(question: str, page_data: Dict) -> str:
+        """HTML içeriğinden yanıt üretir."""
+        if not page_data or 'html' not in page_data:
             return "Bunu bulamadım."
 
-        context = " ".join(context_sentences)
+        html_content = page_data['html']
+        url = page_data['url']
+        
         prompt = f"""Soru: {question}
-Bağlam: {context}
+URL: {url}
+HTML İçeriği:
+{html_content}
 
 İşte talimatlar:
-1. 'Bağlam' bölümündeki bilgilere dayanarak 'Soru'yu doğrudan yanıtla.
-2. 'Verdiğiniz metinde', 'buradaki bilgiye göre' veya benzer ifadeler kullanma.
-3. Doğrudan, net ve bilgiye dayalı bir cevap ver.
-4. Bağlamda bulunan gerçek bilgilere sadık kal.
-5. Eğer cevabı bulamıyorsan, sadece 'Bunu bulamadım.' yaz.
+1. Yukarıdaki HTML içeriğinden soruyu doğrudan yanıtla.
+2. HTML yapısını kullanarak başlıkları, listeleri ve diğer öğeleri doğru bağlamda anla.
+3. 'Verdiğiniz metinde', 'buradaki bilgiye göre' veya benzer ifadeler kullanma.
+4. Doğrudan, net ve bilgiye dayalı bir cevap ver.
+5. HTML içeriğindeki gerçek bilgilere sadık kal.
+6. Eğer cevabı bulamıyorsan, sadece 'Bunu bulamadım.' yaz.
 
 Yanıt:"""
 

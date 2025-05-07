@@ -1,8 +1,8 @@
 # main.py
 import argparse
 import logging
+
 from config import Config
-from content_processor import TextProcessor
 from crawler import crawl_website_with_cache
 from llm_service import LLMService
 from vector_store import VectorStore
@@ -18,7 +18,6 @@ def main(force_refresh: bool):
         print("Hiç içerik çekilemedi.")
         return
 
-    print("\nÇekilen içerikler 'crawled_contents.txt' dosyasına kaydedildi. Lütfen dosyayı kontrol edin.")
     vector_store = VectorStore()
 
     # Vektör veritabanını temizle
@@ -31,40 +30,36 @@ def main(force_refresh: bool):
         if query.lower() == "çık":
             break
 
-        # Sorgudan anahtar kelimeleri çıkar
-        keywords = TextProcessor.extract_keywords(query)
-        logger.info(f"Çıkarılan anahtar kelimeler: {keywords}")
-        # Anahtar kelimeleri birleştirerek yeni bir sorgu oluştur
-        refined_query = " ".join(keywords)
-        logger.info(f"İyileştirilmiş sorgu: {refined_query}")
-
-        query_results = vector_store.query_similar(refined_query)
+        # Vektör araması için orijinal sorguyu kullan
+        logger.info(f"Vektör araması için kullanılan sorgu: {query}")
+        query_results = vector_store.query_similar(query)
         distances = query_results['distances'][0]
         selected_chunks = query_results['metadatas'][0]
 
-        # Cosine distance için 1'den çıkarıyoruz (1-mesafe = benzerlik)
         similarities = [1 - distance for distance in distances]
         logger.info(f"Benzerlik skorları: {similarities}")
 
-        # Benzerlik skoru eşik değerinden büyük olanları seçiyoruz (benzerlik = 1-mesafe)
-        relevant_chunks = [chunk for chunk, similarity in zip(selected_chunks, similarities)
-                           if similarity >= 0.2]  # 0.2 düşük bir benzerlik eşiği
+        # En iyi eşleşen sayfayı bul ve yanıt üret
+        if similarities and similarities[0] >= 0.5:  # En az bir sonuç varsa ve benzerlik eşikten yüksekse
+            best_match = selected_chunks[0]  # En iyi eşleşen sayfa (metadata)
 
-        if not relevant_chunks:
+            # HTML tabanlı yaklaşımı kullan
+            answer = LLMService.generate_answer_from_html(query, best_match)
+            print(f"Yanıt: {answer}")
+
+            print(f"\nKullanılan sayfa: {best_match['url']}")
+            print(f"Benzerlik skoru: %{similarities[0] * 100:.2f}")
+
+        else:
             print("Bunu bulamadım.")
-            print("\nEn yakın içerik parçaları (eşleşme sağlanamadı):")
-            for chunk, similarity in zip(selected_chunks[:3], similarities[:3]):
-                print(f"- Paragraf: {chunk['text'][:50]}... (Benzerlik: {similarity:.4f})")
-            continue
-
-        context_sentences = [chunk['text'] for chunk in relevant_chunks]
-        answer = LLMService.generate_answer(query, context_sentences)
-        print(f"Yanıt: {answer}")
-
-        print("\nSeçilen paragrafların benzerlikleri:")
-        relevant_similarities = [1 - distance for chunk, distance in zip(relevant_chunks, distances[:len(relevant_chunks)])]
-        for chunk, similarity in zip(relevant_chunks, relevant_similarities):
-            print(f"- Paragraf: {chunk['text'][:50]}... (Benzerlik: {similarity:.4f})")
+            if similarities:
+                print("\nEn yakın içerik parçaları (eşleşme sağlanamadı):")
+                # Eski davranış: Sadece benzerlikleri göster
+                for chunk, similarity in zip(selected_chunks[:3], similarities[:3]):
+                    # text anahtarının varlığını kontrol et
+                    page_text = chunk.get('text', '[Metin Yok]')[:50]
+                    page_url = chunk.get('url', '[URL Yok]')
+                    print(f"- Sayfa: {page_url} (Benzerlik: {similarity * 100:.2f})")
 
 
 if __name__ == "__main__":
