@@ -25,7 +25,8 @@ def normalize_text(text: str) -> str:
     text = text.lower()  # Büyük-küçük harf farkını kaldır
     return text
 
-CACHE_FILE = "crawled_contents.json"
+
+CACHE_FILE = "craftgate_crawled_contents.json"
 CACHE_TTL = 24 * 3600  # 24 saat
 
 def load_cached() -> Optional[List[Dict[str,str]]]:
