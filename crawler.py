@@ -14,10 +14,12 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
+
 def normalize_url(url: str) -> str:
     """URL'yi normalleştir: query ve fragmentleri kaldır."""
     parsed = urlparse(url)
     return parsed.scheme + "://" + parsed.netloc + parsed.path
+
 
 def normalize_text(text: str) -> str:
     """Metni normalleştir: fazla boşlukları kaldır, büyük-küçük harf farkını ortadan kaldır."""
@@ -29,7 +31,8 @@ def normalize_text(text: str) -> str:
 CACHE_FILE = "craftgate_crawled_contents.json"
 CACHE_TTL = 24 * 3600  # 24 saat
 
-def load_cached() -> Optional[List[Dict[str,str]]]:
+
+def load_cached() -> Optional[List[Dict[str, str]]]:
     if not os.path.exists(CACHE_FILE):
         return None
     if time.time() - os.path.getmtime(CACHE_FILE) > CACHE_TTL:
@@ -38,12 +41,14 @@ def load_cached() -> Optional[List[Dict[str,str]]]:
         logger.info("🗄️ Cache yüklendi, tarama atlandı.")
         return json.load(f)
 
-def save_cache(chunks: List[Dict[str,str]]):
+
+def save_cache(chunks: List[Dict[str, str]]):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(chunks, f, ensure_ascii=False, indent=2)
     logger.info("🗄️ Yeni tarama tamamlandı, cache'e kaydedildi.")
 
-def crawl_website_with_cache(base_url: str, force_refresh: bool=False) -> List[Dict[str,str]]:
+
+def crawl_website_with_cache(base_url: str, force_refresh: bool = False) -> List[Dict[str, str]]:
     if not force_refresh:
         cached = load_cached()
         if cached is not None:
@@ -62,6 +67,7 @@ def crawl_website_with_cache(base_url: str, force_refresh: bool=False) -> List[D
 
     return chunks
 
+
 def crawl_website(base_url: str) -> List[Dict[str, str]]:
     """
     Web sitesi sayfalarını tarar ve içerik+HTML şeklinde döndürür.
@@ -70,7 +76,7 @@ def crawl_website(base_url: str) -> List[Dict[str, str]]:
     to_visit = [base_url]
     all_pages = []
     seen_urls = set()
-    
+
     while to_visit:
         url = to_visit.pop(0)
         normalized_url = normalize_url(url)
@@ -79,7 +85,7 @@ def crawl_website(base_url: str) -> List[Dict[str, str]]:
             continue
 
         seen_urls.add(normalized_url)
-        
+
         if '/en' in urlparse(url).path:
             continue
 
@@ -104,7 +110,7 @@ def crawl_website(base_url: str) -> List[Dict[str, str]]:
             title = soup.title.text.strip() if soup.title else ""
 
             # Ana içeriği çıkar
-            main_content = extract_main_content(soup)
+            main_content = extract_main_content(html_content)
 
             # HTML'i temizle
             simplified_html = simplify_html(html_content)
@@ -130,7 +136,7 @@ def crawl_website(base_url: str) -> List[Dict[str, str]]:
                     to_visit.append(absolute_url)
 
             visited.add(normalized_url)
-            
+
         except Exception as e:
             logger.error(f"Tarama hatası {url}: {e}")
 
@@ -138,34 +144,47 @@ def crawl_website(base_url: str) -> List[Dict[str, str]]:
     return all_pages
 
 
-def extract_main_content(soup):
+def extract_main_content(html_content: str):
     """
-    Sayfanın ana içeriğini metin olarak çıkarır.
+    HTML içeriğinden ana metni metin olarak çıkarır.
     """
+    # Gelen HTML string'inden BeautifulSoup objesi oluştur
+    soup = BeautifulSoup(html_content, 'html.parser')
+
     # Ana içerik containerları
     main_selectors = [
         'main', 'article', 'div.content', 'div.main-content',
         'div#content', 'section.content', 'div[role="main"]'
     ]
 
+    main_content_text = ""  # Ana metni tutacak değişken
+
     for selector in main_selectors:
-        main_content = soup.select(selector)
-        if main_content:
-            content = max(main_content, key=lambda x: len(x.get_text()))
-            return content.get_text(separator=' ', strip=True)
+        main_content_element = soup.select_one(selector)
+        if main_content_element:
+            # Sadece get_text() çağırın, sonra temizleyin
+            main_content_text = main_content_element.get_text()
+            break  # İlk bulunan ana içeriği alıp döngüyü kır
 
-    # Ana içerik containerı bulunamadığında
-    content_divs = [(div, len(div.get_text())) for div in soup.find_all('div')
-                    if len(div.get_text().strip()) > 100]
+    # Eğer ana içerik selectorları ile bir şey bulunamazsa fallback'e geç
+    if not main_content_text:
+        content_divs = [(div, len(div.get_text())) for div in soup.find_all('div')
+                        if len(div.get_text().strip()) > 100]
 
-    if content_divs:
-        # İçerik en uzun olan div'i döndür
-        max_div = max(content_divs, key=lambda x: x[1])
-        return max_div[0].get_text(separator=' ', strip=True)
+        if content_divs:
+            # İçerik en uzun olan div'i bul
+            max_div = max(content_divs, key=lambda x: x[1])
+            # Sadece get_text() çağırın, sonra temizleyin
+            main_content_text = max_div[0].get_text()
+        else:
+            # Son çare: Tüm metni al (simplify_html zaten temizlenmiş HTML verdiğini varsayıyoruz)
+            # Sadece get_text() çağırın, sonra temizleyin
+            main_content_text = soup.get_text()
 
-    # Son çare: Tüm metni al
-    return soup.get_text(separator=' ', strip=True)
+    # Metni temizle: Fazla boşlukları ve satır sonlarını tek boşluğa dönüştür ve baştaki/sondaki boşlukları kırp
+    cleaned_text = re.sub(r'\s+', ' ', main_content_text).strip()
 
+    return cleaned_text
 
 def simplify_html(html_content):
     """

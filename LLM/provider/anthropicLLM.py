@@ -1,7 +1,9 @@
 from typing import Optional, Dict, Any
 
-from LLM.llmInterface import LLMInterface
-from LLM.llm_providers import LLMProviderName, DEFAULT_SYSTEM_MESSAGE, ROLE_USER
+from LLM import LLMInterface
+from LLM.llm_constants import LLMProviderName, LLMAPIError, logger, DEFAULT_SYSTEM_MESSAGE, \
+    ROLE_USER
+from config import Config
 
 
 class AnthropicLLM(LLMInterface):
@@ -9,7 +11,7 @@ class AnthropicLLM(LLMInterface):
         super().__init__(LLMProviderName.ANTHROPIC)
 
     def _prepare_payload(self, question: str, context: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        model = self._get_config_value("provider", kwargs.get(""))
+        model = self.get_config_value(kwargs, "provider", Config)
         system_message_content = kwargs.get('system_message', DEFAULT_SYSTEM_MESSAGE)
 
         prompt_content = f"{context}\n\nSoru: {question}" if context else question

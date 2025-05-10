@@ -1,7 +1,8 @@
 from typing import Optional, Dict, Any
 
 from LLM.llmInterface import LLMInterface
-from LLM.llm_providers import LLMProviderName, DEFAULT_SYSTEM_MESSAGE, ROLE_SYSTEM, ROLE_USER
+from LLM.llm_constants import LLMProviderName, DEFAULT_SYSTEM_MESSAGE, ROLE_SYSTEM, ROLE_USER
+from config import Config
 
 
 class OpenAILLM(LLMInterface):
@@ -9,7 +10,7 @@ class OpenAILLM(LLMInterface):
         super().__init__(LLMProviderName.OPENAI)
 
     def _prepare_payload(self, question: str, context: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        model = self._get_config_value("provider", kwargs.get(""))
+        model = self.get_config_value(kwargs, "model", Config)
         system_message_content = kwargs.get('system_message', DEFAULT_SYSTEM_MESSAGE)
 
         messages = [{"role": ROLE_SYSTEM, "content": system_message_content}]

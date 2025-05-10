@@ -1,218 +1,210 @@
-import os
+# LLM/llmInterface.py
 from abc import ABC, abstractmethod
-from typing import Optional, Any, Dict
+from typing import Optional, Dict, Any  # Type hintler için Type eklendi
 
-from fastapi import requests
+import requests  # requests kütüphanesi eklendi
 
-from LLM.llm_providers import LLMProviderName, LLMConfigurationError, logger, LLMAPIError, CONTENT_TYPE_JSON
-from config import Config
+# Constants ve hatalar için importlar (bunlar muhtemelen zaten var)
+from LLM.llm_constants import logger, LLMAPIError, LLMConfigurationError, CONTENT_TYPE_JSON, \
+    LLMProviderName  # LLMProviderName de eklendi
 
+
+# Config objesine erişim için, get_config_value metodu Config'i parametre olarak alıyor, bu iyi.
+# Ancak generate_answer metodu içinde kullanmak için Config'i import edelim (metod içinde import dairesel riski azaltır)
+# from config import Config # Generate answer metodu içinde import edilecek
 
 class LLMInterface(ABC):
-    """Tüm LLM sağlayıcıları için temel arayüz."""
+    """Tüm LLM sağlayıcıları için temel sınıf."""
 
-    def __init__(self, provider_name: str):
-        self.provider_name = provider_name.lower()
-        # Temel yapılandırma kontrolü
-        if self.provider_name not in Config.LLM_MODELS:
-            # Ollama gibi bazıları LLM_MODELS'de olmayabilir ama API_URLS'de olmalı
-            if self.provider_name not in Config.API_URLS:
-                logger.warning(
-                    f"'{self.provider_name}' için temel yapılandırma (LLM_MODELS veya API_URLS) "
-                    f"Config dosyasında eksik olabilir."
-                )
-
-    def _get_config_value(self, key: str, kwargs_value: Optional[Any] = None,
-                          default_value: Optional[Any] = None) -> Any:
+    def __init__(self, provider_name: LLMProviderName):  # LLMProviderName tipini kullanabiliriz
         """
-        Yapılandırma değerini alır. Öncelik sırası:
-        1. kwargs ile fonksiyona direkt verilen değer.
-        2. Config.MODEL_SPECIFIC_PARAMS[provider_name].get(key)
-        3. Anahtar türüne göre Config'den (API_URLS, API_KEYS, LLM_MODELS).
-        4. Config.LLM_PARAMS.get(key) (genel parametreler için).
-        5. Metoda gönderilen `default_value`.
+        Args:
+            provider_name: Sağlayıcı enum değeri (LLMProviderName)
         """
-        if kwargs_value is not None:
-            return kwargs_value
+        # __init__ metodunda enum değerini string'e çevirerek saklayalım
+        self.provider_name: str = provider_name.value
 
-        provider_specific_config = Config.MODEL_SPECIFIC_PARAMS.get(self.provider_name, {})
-        if key in provider_specific_config:
-            return provider_specific_config[key]
+    def get_config_value(self, kwargs: dict, key: str, config_obj, default_value=None):
+        """Yapılandırma değerini kwargs'dan veya Config'den alır."""
+        # Önce kwargs'a bak
+        if key in kwargs:
+            return kwargs[key]
 
-        config_sources = {
-            "api_url": Config.API_URLS,
-            "api_key": Config.API_KEYS,  # Ortam değişkeni mantığı aşağıda ayrıca ele alınacak
-            "provider": Config.LLM_MODELS,
-        }
+        # Sonra config nesnesine bak (Config sınıfı)
+        # config_obj = Config olmalı generate_answer içinde
+        if hasattr(config_obj, key.upper()):
+            return getattr(config_obj, key.upper())
 
-        if key in config_sources:
-            source_dict = config_sources[key]
-            # HuggingFace için özel URL birleştirme (provider adı API_URLS'de yoksa)
-            if key == "api_url" and self.provider_name == LLMProviderName.HUGGINGFACE:
-                base_url = source_dict.get(self.provider_name)
-                # model_for_hf, generate_answer'dan kwargs ile veya _get_config_value('provider') ile alınır
-                # Bu metot içinde direkt kwargs'a erişim yok, çağıran yer modeli sağlamalı
-                # Bu yüzden HF URL birleştirmesini HFLLM sınıfına taşıyacağız.
-                # Şimdilik base_url'i döndürsün.
-                if base_url: return base_url
-            elif key == "api_key" and self.provider_name != LLMProviderName.OLLAMA:
-                # API anahtarını Config.API_KEYS'ten almayı dene
-                api_key_from_config = source_dict.get(self.provider_name)
-                env_var_name = f"{self.provider_name.upper()}_API_KEY"
-                api_key_from_env = os.getenv(env_var_name)
+        # API/Model/Parametre sözlüklerine bak (Config.API_URLS, Config.LLM_MODELS, Config.LLM_PARAMS)
+        # self.provider_name artık string olduğu için .value kullanmaya gerek yok
+        if key == "api_url":
+            return config_obj.API_URLS.get(self.provider_name)
+        elif key == "api_key":
+            return config_obj.API_KEYS.get(self.provider_name)
+        elif key == "model":
+            return config_obj.LLM_MODELS.get(self.provider_name)
+        elif key in ["temperature", "max_tokens", "timeout"]:
+            return config_obj.LLM_PARAMS.get(key)
+        # Modele özel parametrelere bak
+        elif hasattr(config_obj,
+                     'MODEL_SPECIFIC_PARAMS') and self.provider_name in config_obj.MODEL_SPECIFIC_PARAMS and key in \
+                config_obj.MODEL_SPECIFIC_PARAMS[self.provider_name]:
+            return config_obj.MODEL_SPECIFIC_PARAMS[self.provider_name].get(key)
 
-                if api_key_from_env:  # Ortam değişkeni öncelikli
-                    return api_key_from_env
-                if api_key_from_config and "your_" not in str(
-                        api_key_from_config).lower() and api_key_from_config:  # Config'de geçerli anahtar
-                    return api_key_from_config
-                if api_key_from_config:  # Config'de placeholder varsa
-                    logger.warning(
-                        f"'{self.provider_name}' için API anahtarı Config.API_KEYS'te placeholder ('{api_key_from_config}') "
-                        f"olarak ayarlanmış ve {env_var_name} ortam değişkeni bulunamadı."
-                    )
-                    # Placeholder'ı döndürmek yerine hata fırlatmak daha güvenli olabilir.
-                    # Şimdilik placeholder'ı döndürelim, API çağrısı başarısız olacaktır.
-                    return api_key_from_config
-                # Ne config'de ne de env'de yoksa, hata aşağıda fırlatılacak.
+        return default_value
 
-            value = source_dict.get(self.provider_name)
-            if value is not None:
-                return value
-
-        if key in Config.LLM_PARAMS:
-            return Config.LLM_PARAMS[key]
-
-        if default_value is not None:
-            return default_value
-
-        # Zorunlu alanlar için kontrol (Ollama API key gerektirmez)
-        if key == "api_url" or \
-                (key == "api_key" and self.provider_name != LLMProviderName.OLLAMA) or \
-                (
-                        key == "provider" and self.provider_name != LLMProviderName.GEMINI):  # Gemini provider adını URL'den alır
-            raise LLMConfigurationError(
-                f"'{self.provider_name}' için zorunlu yapılandırma değeri '{key}' bulunamadı. "
-                f"Lütfen config.py dosyasını ve ilgili ortam değişkenlerini kontrol edin (örn: {self.provider_name.upper()}_API_KEY)."
-            )
-
-        logger.debug(
-            f"'{self.provider_name}' için '{key}' yapılandırma değeri bulunamadı, None/default_value kullanılıyor.")
-        return None
-
-    def _prepare_common_payload_params(self, **kwargs) -> Dict[str, Any]:
-        """kwargs ve Config'den genel LLM parametrelerini alır."""
-        params = {}
-        temperature = self._get_config_value("temperature", kwargs.get("temperature"))
-        if temperature is not None: params["temperature"] = temperature
-
-        max_tokens = self._get_config_value("max_tokens", kwargs.get("max_tokens"))
-        if max_tokens is not None: params["max_tokens"] = max_tokens
-
-        # Diğer bilinen ortak parametreler eklenebilir (örn: top_p, top_k)
-        # Ancak bu parametrelerin adları API'den API'ye değişebilir (örn: max_tokens vs maxOutputTokens)
-        # Bu yüzden bunları her LLM sınıfında özel olarak ele almak daha iyi olabilir.
-        return params
-
+    # Ortak HTTP isteği yapma metodu (stream destekli değil şimdilik, Ollama override edecek)
+    # Bu metodun dönüş tipi requests.Response
     def _make_request(self, method: str, url: str, headers: Dict[str, str],
                       json_payload: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None,
-                      **kwargs) -> requests.Response:
-        """Merkezi HTTP istek fonksiyonu."""
-        timeout = self._get_config_value("timeout", kwargs.get("timeout"))
+                      **kwargs) -> requests.Response:  # requests.Response dönüş tipi eklendi
+        """
+        Merkezi HTTP istek fonksiyonu.
+
+        Args:
+            method: HTTP metodu (GET, POST)
+            url: İstek URL'si
+            headers: İstek başlıkları
+            json_payload: POST/PUT istekleri için JSON gövdesi
+            params: URL query parametreleri
+            kwargs: Timeout gibi ek parametreler (generate_answer'dan gelir)
+
+        Returns:
+            requests.Response: İstek yanıt objesi
+
+        Raises:
+            LLMAPIError: API bağlantı veya HTTP hatası durumunda
+        """
+        # Config objesine erişim için, fonksiyon/metod içinde import etmek dairesel import riskini azaltır
+        from config import Config  # Fonksiyon/metod içinde import etmek dairesel import riskini azaltır
+
+        timeout = self.get_config_value(kwargs, "timeout", Config)
+
         try:
             response = requests.request(method, url, headers=headers, json=json_payload, params=params, timeout=timeout)
-            response.raise_for_status()  # HTTP 4xx/5xx hataları için exception fırlatır
+            # HTTP hatalarını (4xx, 5xx) otomatik olarak kontrol et
+            response.raise_for_status()
             return response
         except requests.exceptions.HTTPError as e:
-            # Detaylı hata mesajı için yanıt içeriğini logla/kullan
+            # HTTP hatası durumunda API'dan dönen yanıtı yakalamaya çalış
             response_text = None
             try:
-                response_text = e.response.json()
-            except requests.exceptions.JSONDecodeError:
-                response_text = e.response.text
+                response_text = e.response.json()  # JSON parse etmeyi dene
+            except:
+                try:
+                    response_text = e.response.text  # JSON değilse metin olarak al
+                except:
+                    pass  # Yanıt gövdesi yoksa
+
+            status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
+
             logger.error(
-                f"{self.provider_name.capitalize()} API HTTP Hatası: {e.response.status_code} - {response_text}",
+                f"{self.provider_name.capitalize()} API HTTP Hatası: {status_code} - {response_text}",
                 exc_info=True)
-            raise LLMAPIError(
-                message=f"API çağrısı başarısız oldu.",
-                provider=self.provider_name,
-                status_code=e.response.status_code,
-                response_text=str(response_text)
-            ) from e
-        except requests.exceptions.RequestException as e:  # Bağlantı hataları, timeout vb.
+            # LLMAPIError fırlatırken response_text'i string yapalım
+            raise LLMAPIError(message="API çağrısı başarısız oldu.", provider=self.provider_name,
+                              status_code=status_code, response_text=str(response_text)) from e
+        except requests.exceptions.RequestException as e:
+            # Bağlantı zaman aşımı gibi diğer requests hatalarını yakala
             logger.error(f"{self.provider_name.capitalize()} API Bağlantı Hatası: {e}", exc_info=True)
-            raise LLMAPIError(
-                message=f"API'ye bağlanırken bir sorun oluştu: {e}",
-                provider=self.provider_name
-            ) from e
+            raise LLMAPIError(message=f"API'ye bağlanırken bir sorun oluştu: {e}", provider=self.provider_name) from e
+
 
     @abstractmethod
     def _prepare_payload(self, question: str, context: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Her sağlayıcı için API isteğinin gövdesini hazırlar."""
-        pass
+        """
+        API isteği için modele özel payload'ı hazırlar.
+        Bu metod her sağlayıcı sınıfı tarafından implemente edilmelidir.
+        """
+        pass  # Implementasyon sağlayıcı sınıflarında olacak
 
     @abstractmethod
     def _parse_response(self, response_data: Any) -> str:
-        """Her sağlayıcının API yanıtını ayrıştırır ve metin yanıtını döndürür."""
-        pass
+        """
+        API yanıtından (JSON/dict olarak) üretilen metin yanıtını ayrıştırır.
+        Bu metod her sağlayıcı sınıfı tarafından implemente edilmelidir.
+        API'ye özel hataları (güvenlik filtresi vb.) burada LLMAPIError fırlatarak belirtebilirsiniz.
+        """
+        pass  # Implementasyon sağlayıcı sınıflarında olacak
 
-    def generate_answer(self, question: str, context: Optional[str] = None, **kwargs) -> str:
+    # generate_answer metodu artık soyut değil, ortak implementasyon sağlar
+    def generate_answer(self, question: str, context: str = None, **kwargs) -> str:
         """
-        Verilen soru ve bağlam üzerinden yanıt üretir.
-        Bu metot artık Template Method Paternini daha net kullanıyor.
+        Verilen soru ve bağlam üzerinden ortak akışla yanıt üretir.
+        Bu metod genellikle override edilmeyecektir (Hugging Face URL yapısı veya Ollama stream gibi özel durumlar hariç).
         """
+        # Config objesine erişim için import (metod içinde)
+        from config import Config
+
         try:
-            api_url = self._get_config_value("api_url", kwargs.get("api_url"))
-            # API anahtarı ve diğer başlıklar _prepare_headers içinde ele alınacak
-
+            # 1. Payload'ı hazırlayın (sağlayıcıya özel metod)
+            # _prepare_payload metoduna tüm kwargs'ları iletelim ki içinde config değerlerini alabilsin
             payload = self._prepare_payload(question, context, **kwargs)
-            headers = self._prepare_headers(**kwargs)
 
-            # Gemini gibi bazı API'ler query parametresi olarak key alabilir.
-            query_params = self._get_query_params(**kwargs)
+            # 2. API URL'sini ve API Key'i alın
+            # _prepare_payload içinde URL hazırlama yoksa Config'den alınır
+            api_url = self.get_config_value(kwargs, "api_url", Config)
+            api_key = self.get_config_value(kwargs, "api_key", Config)
+            # Model adı payload'da belirtildiği için burada ayrıca alınmasına gerek yok
 
-            response = self._make_request("POST", api_url, headers=headers, json_payload=payload, params=query_params,
-                                          **kwargs)
+            # API URL eksikse hata fırlat
+            if not api_url:
+                raise LLMConfigurationError(
+                    f"{self.provider_name.capitalize()} için API URL'si Config.API_URLS'de tanımlı değil veya _prepare_payload içinde hazırlanmadı.")
+
+            # 3. Headers'ı hazırlayın (API Key'i içeren)
+            headers = {
+                "Content-Type": CONTENT_TYPE_JSON,  # Genellikle JSON gönderilir
+            }
+            # API Key header'ı sağlayıcıya göre değişir
+            if api_key:
+                if self.provider_name == LLMProviderName.OPENAI.value:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                elif self.provider_name == LLMProviderName.GEMINI.value:
+                    # Gemini için header formatı "x-goog-api-key" veya Authorization olabilir
+                    # Config'deki API_URL'e göre format değişebilir (Google AI vs Google Cloud)
+                    # Config'de kullanılan URL'ye göre burada doğru header seçilmelidir.
+                    # Google AI için "x-goog-api-key", Google Cloud için "Authorization: Bearer"
+                    # Basitlik için şimdilik "x-goog-api-key" varsayalım (Config.API_URLS googleapis.com'a işaret ediyor)
+                    headers["x-goog-api-key"] = api_key
+                elif self.provider_name == LLMProviderName.ANTHROPIC.value:
+                    headers["x-api-key"] = api_key
+                    headers["anthropic-version"] = "2023-06-01"  # Anthropic version header'ı gerekebilir
+                elif self.provider_name == LLMProviderName.HUGGINGFACE.value:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                # Ollama genellikle API Key gerektirmez, gerektirirse buraya eklenir
+                # else:
+                #    # Bilinmeyen sağlayıcı için API Key header formatı nasıl olmalı?
+                #    logger.warning(f"Sağlayıcı {self.provider_name} için API Key header formatı tanımsız.")
+
+            # 4. HTTP isteği yapın (ortak metod)
+            # _make_request metodu requests.exceptions hatalarını LLMAPIError'a sarmalar
+            response = self._make_request("POST", api_url, headers=headers, json_payload=payload, **kwargs)
+
+            # 5. Yanıt verisini alın (response.json() zaten _make_request içinde veya dışında yapılabilir)
+            # _make_request response objesini döndürdüğü için burada .json() çağrısı yapmalıyız.
             response_data = response.json()
+
+            # 6. Yanıtı ayrıştırın (sağlayıcıya özel metod)
+            # _parse_response API'ye özel hataları (güvenlik vb.) LLMAPIError olarak fırlatmalı
             return self._parse_response(response_data)
 
-        except LLMConfigurationError:  # _get_config_value'dan gelebilir
-            raise  # Olduğu gibi tekrar fırlat
-        except LLMAPIError:  # _make_request'ten veya _parse_response'tan gelebilir
-            raise  # Olduğu gibi tekrar fırlat
-        except (KeyError, IndexError, TypeError) as e:  # Yanıt ayrıştırma sırasında beklenmedik format
-            logger.error(f"{self.provider_name.capitalize()} yanıtını işlerken beklenmedik format: {e}", exc_info=True)
-            raise LLMAPIError(message="API yanıtı beklenmedik bir formattaydı.", provider=self.provider_name) from e
-        except Exception as e:  # Diğer beklenmedik hatalar
-            logger.error(f"{self.provider_name.capitalize()} yanıt üretirken genel bir hata oluştu: {e}", exc_info=True)
+        except LLMConfigurationError:
+            # Config hatası zaten yakalandı ve loglandı/fırlatıldı, bunu tekrar fırlat
+            raise
+        except LLMAPIError:
+            # _make_request veya _parse_response tarafından fırlatılan API hataları
+            # Zaten LLMAPIError olduğu için bunu yakalayıp tekrar fırlatmak yeterli.
+            # Daha spesifik bir işlem yapmak istenirse burası genişletilir.
+            raise
+        except Exception as e:
+            # Beklenmeyen diğer hataları yakala
+            logger.error(f"{self.provider_name.capitalize()} yanıt üretirken beklenmedik bir hata oluştu: {e}",
+                         exc_info=True)
+            # Beklenmeyen hataları da LLMAPIError'a sararak fırlat
             raise LLMAPIError(message=f"Beklenmedik bir hata oluştu: {e}", provider=self.provider_name) from e
 
-    def _prepare_headers(self, **kwargs) -> Dict[str, str]:
-        """Genel başlıkları ve sağlayıcıya özel başlıkları hazırlar."""
-        headers = {"Content-Type": CONTENT_TYPE_JSON}
-        api_key_val = self._get_config_value("api_key", kwargs.get("api_key"))
-
-        if self.provider_name == LLMProviderName.OPENAI:
-            headers["Authorization"] = f"Bearer {api_key_val}"
-        elif self.provider_name == LLMProviderName.ANTHROPIC:
-            headers["X-API-Key"] = api_key_val
-            # Anthropic version config'den veya kwargs'tan alınabilir
-            anthropic_version = self._get_config_value(
-                "anthropic_version",
-                kwargs.get("anthropic_version"),
-                default_value=Config.MODEL_SPECIFIC_PARAMS.get(LLMProviderName.ANTHROPIC, {}).get("anthropic_version",
-                                                                                                  "2023-06-01")
-            )
-            headers["anthropic-version"] = anthropic_version
-        elif self.provider_name == LLMProviderName.HUGGINGFACE:
-            headers["Authorization"] = f"Bearer {api_key_val}"
-        # Gemini ve Ollama için özel başlık gerekmiyorsa burası boş kalabilir.
-        # Gemini API anahtarını query parametresi olarak alır.
-        return headers
-
-    def _get_query_params(self, **kwargs) -> Optional[Dict[str, str]]:
-        """Bazı API'ler için query parametrelerini hazırlar (örn: Gemini)."""
-        if self.provider_name == LLMProviderName.GEMINI:
-            api_key_val = self._get_config_value("api_key", kwargs.get("api_key"))
-            return {"key": api_key_val}
-        return None
+    @staticmethod
+    def get_error_message() -> str:
+        """Hata durumunda döndürülecek genel mesaj."""
+        return "Yanıt oluşturulurken bir hata meydana geldi."

@@ -1,11 +1,11 @@
 import json
 from typing import Optional, Dict, Any
 
-from fastapi import requests
+import requests
 
 from LLM.llmInterface import LLMInterface
-from LLM.llm_providers import LLMProviderName, DEFAULT_SYSTEM_MESSAGE, LLMAPIError, logger, \
-    LLMConfigurationError
+from LLM.llm_constants import LLMProviderName, LLMAPIError, logger, LLMConfigurationError, DEFAULT_SYSTEM_MESSAGE
+from config import Config
 
 
 class OllamaLLM(LLMInterface):
@@ -13,10 +13,10 @@ class OllamaLLM(LLMInterface):
         super().__init__(LLMProviderName.OLLAMA)
 
     def _prepare_payload(self, question: str, context: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        model = self._get_config_value("provider", kwargs.get(""))
+        model = self.get_config_value(kwargs, "provider", Config)
         system_message_content = kwargs.get('system_message', DEFAULT_SYSTEM_MESSAGE)
         # Ollama'ya özel 'stream' Config.MODEL_SPECIFIC_PARAMS'tan veya kwargs'tan gelebilir
-        stream = self._get_config_value("stream", kwargs.get("stream"), default_value=False)
+        stream = self.get_config_value(kwargs, "stream", Config, default_value=False)
 
         prompt_content = f"{context}\n\nSoru: {question}" if context else question
         payload: Dict[str, Any] = {
@@ -31,7 +31,7 @@ class OllamaLLM(LLMInterface):
         common_params = self._prepare_common_payload_params(**kwargs)  # temperature
         if "temperature" in common_params: ollama_options["temperature"] = common_params["temperature"]
         # max_tokens Ollama'da "num_predict" olarak geçer
-        max_tokens_ollama = self._get_config_value("max_tokens", kwargs.get("max_tokens"))
+        max_tokens_ollama = self.get_config_value("max_tokens", kwargs.get("max_tokens"))
         if max_tokens_ollama is not None: ollama_options["num_predict"] = int(max_tokens_ollama)
 
         # Diğer Ollama'ya özel 'options' parametreleri
@@ -67,7 +67,7 @@ class OllamaLLM(LLMInterface):
     # Ollama stream yanıtını düzgün işlemek için generate_answer'ı override edelim.
     def generate_answer(self, question: str, context: Optional[str] = None, **kwargs) -> str:
         try:
-            api_url = self._get_config_value("api_url", kwargs.get("api_url"))
+            api_url = self.get_config_value(kwargs, "api_url", Config)
             payload = self._prepare_payload(question, context, **kwargs)
             headers = self._prepare_headers(**kwargs)  # Ollama için genellikle özel header gerekmez
 
@@ -126,7 +126,7 @@ class OllamaLLM(LLMInterface):
                       json_payload: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None,
                       stream: bool = False, **kwargs) -> requests.Response:
         """Merkezi HTTP istek fonksiyonu (stream destekli)."""
-        timeout = self._get_config_value("timeout", kwargs.get("timeout"))
+        timeout = self.get_config_value(kwargs, "timeout", Config)
         try:
             # stream=True ise requests.post stream parametresini alır
             response = requests.request(method, url, headers=headers, json=json_payload, params=params, timeout=timeout,

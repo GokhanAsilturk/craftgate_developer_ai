@@ -1,17 +1,15 @@
 from typing import Dict, Any, Optional
 
 from LLM.llmInterface import LLMInterface
-from LLM.llm_providers import LLMProviderName, DEFAULT_SYSTEM_MESSAGE, LLMAPIError, logger
-
-
-# config.py dosyasından Config sınıfını import ediyoruz
+from LLM.llm_constants import LLMProviderName, DEFAULT_SYSTEM_MESSAGE, logger, LLMAPIError
+from config import Config
 
 
 class GeminiLLM(LLMInterface):
     def __init__(self):
         super().__init__(LLMProviderName.GEMINI)
         # Gemini'nin provider adı URL'de belirtildiği için (Config.API_URLS["gemini"])
-        # _get_config_value("provider") çağrısı burada gereksiz.
+        # get_config_value("provider") çağrısı burada gereksiz.
 
     def _prepare_payload(self, question: str, context: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         system_instruction_content = kwargs.get('system_message', DEFAULT_SYSTEM_MESSAGE)
@@ -23,10 +21,12 @@ class GeminiLLM(LLMInterface):
         payload: Dict[str, Any] = {"contents": contents}
 
         generation_config = {}
-        temperature = self._get_config_value("temperature", kwargs.get("temperature"))
+        temperature = self.get_config_value(kwargs, "temperature", Config)  # <-- Düzeltildi: kwargs, key, Config
         if temperature is not None: generation_config["temperature"] = temperature
 
-        max_output_tokens = self._get_config_value("max_tokens", kwargs.get("max_tokens"))  # Gemini'de maxOutputTokens
+        max_output_tokens = self.get_config_value(kwargs, "max_tokens",
+                                                  Config)  # Gemini'de maxOutputTokens # <-- Düzeltildi
+
         if max_output_tokens is not None: generation_config["maxOutputTokens"] = max_output_tokens
 
         # Gemini'ye özel diğer generationConfig parametreleri
