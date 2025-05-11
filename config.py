@@ -10,7 +10,7 @@ class Config:
     LLM_MODELS = {
         "openai": "gpt-3.5-turbo",
         "anthropic": "claude-3-sonnet",
-        "gemini": "gemini-1.5-pro",
+        "gemini": "gemini-2.0-flash",
         "huggingface": "microsoft/phi-4-mini-instruct",
         "ollama": "mistral:7b"
     }
@@ -19,7 +19,7 @@ class Config:
     API_KEYS = {
         "openai": "your_openai_api_key",
         "anthropic": "your_anthropic_api_key",
-        "gemini": "AIzaSyCaHOVlQBa2QwDmZ9Q31thK-meE6AXdmQw",
+        "gemini": "AIzaSyBJQsad_rLYezFVWLckk1y-WqIYpd5xags",
         "huggingface": "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"
     }
 
@@ -27,7 +27,7 @@ class Config:
     API_URLS = {
         "openai": "https://api.openai.com/v1/chat/completions",
         "anthropic": "https://api.anthropic.com/v1/messages",
-        "gemini": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
         "huggingface": "https://api-inference.huggingface.co/models/",
         "ollama": "http://localhost:11434/api/generate"
     }

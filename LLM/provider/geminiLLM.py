@@ -1,3 +1,6 @@
+import os
+import textwrap
+from datetime import datetime
 from typing import Dict, Any, Optional
 
 from LLM.llmInterface import LLMInterface
@@ -14,6 +17,38 @@ class GeminiLLM(LLMInterface):
     def _prepare_payload(self, question: str, context: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         system_instruction_content = kwargs.get('system_message', DEFAULT_SYSTEM_MESSAGE)
         prompt_content = f"{context}\n\nSoru: {question}" if context else question
+
+        try:
+            # Kayıt için bir dizin oluşturun (varsa atla)
+            dump_dir = "prompt_dumps"
+            os.makedirs(dump_dir, exist_ok=True)
+
+            # Dosya adı için zaman damgası kullanın
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            filename = os.path.join(dump_dir, f"{self.provider_name}_prompt_{timestamp}.txt")
+
+            # Prompt içeriğini dosyaya yazın
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(f"Provider: {self.provider_name}\n")
+                f.write(f"Timestamp: {datetime.now()}\n")
+                f.write("-" * 20 + "\n")
+
+                if system_instruction_content:
+                    f.write("System Message:\n")
+                    wrapped_system_instruction = textwrap.fill(system_instruction_content,
+                                                               width=80)  # 80 karakter genişliğinde satırlar
+                    f.write(wrapped_system_instruction + "\n")
+                    f.write("-" * 20 + "\n")
+
+                f.write("Prompt Content (Context + Question):\n")
+                wrapped_prompt_content = textwrap.fill(prompt_content, width=80)
+                f.write(wrapped_prompt_content + "\n")
+                f.write("=" * 40 + "\n")
+
+            logger.info(f"Prompt içeriği '{filename}' dosyasına kaydedildi.")
+
+        except Exception as e:
+            logger.error(f"Prompt içeriğini kaydederken hata oluştu: {e}")
 
         contents = [{"parts": [{"text": prompt_content}]}]
         # TODO: Gemini için context ve chat geçmişi yönetimi daha gelişmiş bir "contents" yapısı gerektirebilir.
