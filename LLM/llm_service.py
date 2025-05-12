@@ -3,7 +3,6 @@ import logging
 from typing import Dict
 
 from LLM.llm_providers_config import LLMFactory
-from crawler import extract_main_content
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +30,6 @@ class LLMService:
 
         # HTML içeriğinden ana metni çıkarın
         html_content = page_data['html']
-        main_content = extract_main_content(html_content)
-
-        # Bağlam oluştur
-        context = main_content
 
         # Parametreleri hazırla
         llm_kwargs = kwargs.copy()
@@ -45,9 +40,4 @@ class LLMService:
         llm = LLMFactory.create_llm(provider, **llm_kwargs)
 
         # Yanıt üret
-        return llm.generate_answer(question, context, **llm_kwargs)
-
-
-
-
-
+        return llm.generate_answer(question, html_content, **llm_kwargs)

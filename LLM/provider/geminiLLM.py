@@ -56,11 +56,10 @@ class GeminiLLM(LLMInterface):
         payload: Dict[str, Any] = {"contents": contents}
 
         generation_config = {}
-        temperature = self.get_config_value(kwargs, "temperature", Config)  # <-- Düzeltildi: kwargs, key, Config
+        temperature = self.get_config_value(kwargs, "temperature", Config)
         if temperature is not None: generation_config["temperature"] = temperature
 
-        max_output_tokens = self.get_config_value(kwargs, "max_tokens",
-                                                  Config)  # Gemini'de maxOutputTokens # <-- Düzeltildi
+        max_output_tokens = self.get_config_value(kwargs, "max_tokens", Config)
 
         if max_output_tokens is not None: generation_config["maxOutputTokens"] = max_output_tokens
 
