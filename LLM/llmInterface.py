@@ -127,7 +127,6 @@ class LLMInterface(ABC):
         """
         pass  # Implementasyon sağlayıcı sınıflarında olacak
 
-    # generate_answer metodu artık soyut değil, ortak implementasyon sağlar
     def generate_answer(self, question: str, context: str = None, **kwargs) -> str:
         """
         Verilen soru ve bağlam üzerinden ortak akışla yanıt üretir.

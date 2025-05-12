@@ -10,7 +10,12 @@ CONTENT_TYPE_JSON = "application/json"
 ROLE_USER = "user"
 ROLE_ASSISTANT = "assistant"
 ROLE_SYSTEM = "system"
-DEFAULT_SYSTEM_MESSAGE = "Sen yardımcı bir asistansın. Craftgate geliştirici dokümantasyonu hakkında sorulara yanıt ver."
+DEFAULT_SYSTEM_MESSAGE = ("Sen yardımcı bir asistansın. "
+                          "Craftgate geliştirici dokümantasyonu hakkında sorulara yanıt ver."
+                          "'Bu dökümanda, Bu belgede' gibi ifadeler kullanmadan yanıt ver."
+                          "Sana verdiğimiz html sayfalarını kullanarak yanıt vermeye çalış."
+                          "Soruyla ilgili yeterli bilgi yoksa yanıtın başına 'FALSE -' ekle."
+                          "Bilgi yeterliyse cevabını 'TRUE -' ile başlat.")
 
 
 # Enum sınıfı

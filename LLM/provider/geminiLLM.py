@@ -16,7 +16,7 @@ class GeminiLLM(LLMInterface):
 
     def _prepare_payload(self, question: str, context: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         system_instruction_content = kwargs.get('system_message', DEFAULT_SYSTEM_MESSAGE)
-        prompt_content = f"{context}\n\nSoru: {question}" if context else question
+        prompt_content = f"Soru: {question}\n\n{context}" if context else question
 
         try:
             # Kayıt için bir dizin oluşturun (varsa atla)
